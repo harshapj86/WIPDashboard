@@ -198,11 +198,17 @@ the live dashboard updates itself.**
   pasted in by mistake). The build script buckets blanks into "Other" —
   functional, but the fact_pf breakdown will only get cleaner if the
   source column does.
-- **"Business Unit" spelling/casing drift across fiscal years.** e.g.
-  "Incident Fees" vs "Incident fees" show up as separate filter options
-  because the raw sheets don't spell it identically every year. Cosmetic —
-  each variant still totals correctly — but worth standardising in the
-  source sheets if it bothers you.
+- **Casing/whitespace normalization.** Text values in `Business Unit`
+  and `Category` weren't spelled identically across fiscal years (e.g.
+  "Incident Fees" vs "Incident fees"). Earlier this was treated as
+  cosmetic, but it isn't — it silently splits one real category into two,
+  which shows up as fake zero-gaps in trend charts wherever the other
+  casing was used that month. `build_data.py` now collapses any column
+  used for grouping (Business Unit, Category, Product Family, Item,
+  Executive, Transaction Type) to its most-frequent spelling wherever case
+  or leading/trailing whitespace is the only difference, and prints how
+  many distinct values it merged so you can sanity-check after adding a
+  new year's sheet.
 - **Chart.js and Lucide icons load from a CDN** with automatic fallbacks
   (cdnjs → jsDelivr → unpkg). If a viewer's network blocks all three,
   charts fall back to a text notice and nav icons fall back to plain
