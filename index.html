@@ -1466,7 +1466,7 @@ function kpiGrowthContext(){
     revMoM: last?last.mom:null, revYoY: last?last.yoy:null, revQoQ: lastQ?lastQ.qoq:null,
     gpMoM: (()=>{ if(series.length<2) return null; const p=series[series.length-2]; return safeDiv(last.gp-p.gp,p.gp)*100; })(),
     gpQoQ: lastQ?lastQ.gpQoq:null,
-    gpYoY: (()=>{ const byMk={}; series.forEach(r=>byMk[r.mk]=r); const p=byMk[last.mk-100]; return p? safeDiv(last.gp-p.gp,p.gp)*100 : null; })(),
+    gpYoY: (()=>{ if(!last) return null; const byMk={}; series.forEach(r=>byMk[r.mk]=r); const p=byMk[last.mk-100]; return p? safeDiv(last.gp-p.gp,p.gp)*100 : null; })(),
     spark, sparkGP,
   };
 }

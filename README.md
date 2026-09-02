@@ -137,18 +137,32 @@ the live dashboard updates itself.**
   stay private. (We discussed real access-control options earlier — pre-split
   builds behind Cloudflare Access, or a proper backend — if you want to
   revisit that.)
-- **`data.json` loads via a synchronous request**, which needs a real
+- **`data.json` loads via a `fetch()` request**, which needs a real
   HTTP(S) server — exactly what GitHub Pages is. It will *not* work if you
   double-click `index.html` and open it straight from your hard drive
   (`file://`); you'll see a "could not load data.json" message on the
-  loading screen in that case. Always test through the published URL (or
-  a local static server like `python -m http.server`), not by opening the
-  file directly.
+  loading screen in that case, with the specific error underneath it.
+  Always test through the published URL (or a local static server like
+  `python -m http.server`), not by opening the file directly.
+- **Date columns must be real dates, not text.** `TXNDate` in the raw
+  sheets needs to be an actual Excel date cell. `build_data.py` handles
+  both real dates and plain `DD-MM-YYYY` text (one early sheet used text),
+  but an unrecognised date format on a *new* sheet would silently drop
+  that sheet's rows from the daily view only (`fact_day`) — everything
+  else (fact_month, fact_bu, etc., and therefore every chart and KPI)
+  stays correct, since only fact_day depends on day-level dates. The build
+  script prints a warning naming the row count if this happens, so check
+  the Action log after adding a new year's sheet.
 - **"Product Family" data quality.** That column in the raw sheets is
   inconsistently filled (sometimes blank, sometimes has an item code
   pasted in by mistake). The build script buckets blanks into "Other" —
   functional, but the fact_pf breakdown will only get cleaner if the
   source column does.
+- **"Business Unit" spelling/casing drift across fiscal years.** e.g.
+  "Incident Fees" vs "Incident fees" show up as separate filter options
+  because the raw sheets don't spell it identically every year. Cosmetic —
+  each variant still totals correctly — but worth standardising in the
+  source sheets if it bothers you.
 - **GP/transaction-count drift on historical months.** When this
   automation was first validated against the previous hand-built
   dashboard, revenue matched exactly for all 721 month×centre

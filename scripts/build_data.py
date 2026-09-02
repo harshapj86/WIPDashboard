@@ -206,10 +206,31 @@ def load_raw_data(xls):
     raw["GP AT Amount"] = pd.to_numeric(raw["GP AT Amount"], errors="coerce").fillna(0.0)
 
     def to_date_str(v):
+        """TXNDate is a real datetime in some sheets but a plain DD-MM-YYYY
+        (or D-M-YYYY) text string in others (seen in 'Raw Data 24-25') —
+        handle both, or fact_day silently loses whole sheets' worth of days,
+        which corrupts MIN_DATE and breaks date-range filtering for any
+        year affected."""
+        if v is None:
+            return None
         if hasattr(v, "strftime"):
             return v.strftime("%Y-%m-%d")
+        s = str(v).strip()
+        if not s:
+            return None
+        for fmt in ("%d-%m-%Y", "%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                from datetime import datetime as _dt
+                return _dt.strptime(s, fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                continue
         return None
     raw["DateStr"] = raw["TXNDate"].apply(to_date_str)
+    bad_dates = raw["DateStr"].isna().sum()
+    if bad_dates:
+        print(f"WARNING: {bad_dates} row(s) had an unparseable TXNDate — "
+              f"they're excluded from fact_day (daily view) but still count "
+              f"everywhere else (fact_month, fact_bu, etc).")
 
     return raw
 
