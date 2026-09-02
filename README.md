@@ -61,13 +61,53 @@ The build script reads these sheets:
 | Sheet | Used for |
 |---|---|
 | Any sheet starting with **"Raw"** (`Raw Data 24-25`, `Raw Data 2025-26`, `Rawdata 26-27`, …) | All transaction-level data — revenue, GP, business unit, category, item, executive, day, txn type |
+| **GP** | Overrides the headline GP figure with Apple's spare-part incentive included (see "How Gross Profit is calculated" below) |
 | **Location Master** | Maps each centre to its ARM, State, and Location Type |
 | **CSAT** | Monthly CSAT % per centre |
 | **Revenue Target**, **GP Target**, **CSAT Target** | Monthly targets per centre |
 
-Two sheets (`Revenue `, `GP`) hold legacy FY22-23 reference data and are
-**not** read by the build script — the dashboard's data starts from
-whatever the "Raw…" sheets cover.
+One sheet (`Revenue ` — note the trailing space in its name) holds legacy
+FY22-23 reference data from before this dashboard existed and is **not**
+read by the build script.
+
+### How Gross Profit is calculated
+
+Two different figures feed into "GP" depending on which part of the
+dashboard you're looking at:
+
+- **Transaction GP** — summed straight from each raw sale's `GP AT Amount`
+  column. This is what every breakdown (by business unit, category, item,
+  executive, centre-explorer drill-down, day) is built from.
+- **Incentive-inclusive GP** — the **GP** sheet additionally includes
+  Apple's spare-part incentive, which isn't tied to any individual
+  transaction (Apple pays it as a periodic lump sum per centre, not per
+  repair). The **GP** sheet is a hand-maintained report: one block per
+  fiscal year (new blocks get added below the previous ones as years
+  pass), each headed by a row whose first cell is `Branch ID` or `Centre
+  Name`, with 12 monthly columns per centre. `build_data.py` auto-detects
+  however many blocks exist — a new fiscal year needs no code change, just
+  a new block appended to the sheet, in the same header-then-centre-rows
+  shape as the existing ones.
+
+  Wherever that sheet has a figure for a given centre/month, it **replaces**
+  the transaction-derived GP for:
+  - `fact_month` (drives Executive Overview, the GP tab, and every trend
+    chart)
+  - `fact_day` (drives the "exact" KPI totals, which sum from daily data
+    for date-range precision) — the month's incentive is added onto that
+    centre's **1st of the month** entry, since there's no data saying
+    which day it belongs to. Any FY, quarter, or full-month filter
+    captures it correctly; a custom date range that excludes day 1 of a
+    month won't.
+
+  Every other breakdown (by business unit, category, product family, item,
+  transaction type, or executive) is **not** adjusted — there's no basis
+  for attributing a lump-sum incentive to a specific category or associate.
+  So on months with a real incentive, you'll correctly see the headline GP
+  run higher than what those breakdowns sum to on their own; that gap *is*
+  the incentive. `gpCoveredMonths` in `data.json` lists exactly which
+  months the GP sheet had a figure for, which is what the dashboard's "GP
+  coverage" indicator is built from.
 
 ### Adding a new fiscal year
 
@@ -163,13 +203,6 @@ the live dashboard updates itself.**
   because the raw sheets don't spell it identically every year. Cosmetic —
   each variant still totals correctly — but worth standardising in the
   source sheets if it bothers you.
-- **GP/transaction-count drift on historical months.** When this
-  automation was first validated against the previous hand-built
-  dashboard, revenue matched exactly for all 721 month×centre
-  combinations checked; a small number of GP figures and transaction
-  counts differed slightly, traced to the underlying workbook having been
-  edited since that earlier snapshot was taken — not a bug in the
-  conversion logic.
 - **Chart.js and Lucide icons load from a CDN** with automatic fallbacks
   (cdnjs → jsDelivr → unpkg). If a viewer's network blocks all three,
   charts fall back to a text notice and nav icons fall back to plain

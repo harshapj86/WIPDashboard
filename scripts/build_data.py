@@ -235,6 +235,65 @@ def load_raw_data(xls):
     return raw
 
 
+def parse_gp_report(xls):
+    """The 'GP' sheet is a hand-maintained report: one block per fiscal
+    year, each headed by a row whose first cell is 'Branch ID' or 'Centre
+    Name' (column headers after that are the 12 months of that FY, as
+    either real dates or 'Month YY' text), running until the next 'Grand
+    Total' row or a blank row. Later blocks are later fiscal years — this
+    auto-detects however many blocks exist, so a new year's block needs no
+    code change here, just a new block in the sheet.
+
+    These monthly-per-centre GP figures include Apple's spare-part
+    incentive on top of transaction GP — the raw transaction rows have no
+    such column, so this is the only source for it. Where a cell here is
+    blank, no incentive was recorded for that centre/month.
+
+    Returns {(MonthKey, Centre): gp_value_including_incentive}.
+    """
+    if "GP" not in xls.sheet_names:
+        print("WARNING: no 'GP' sheet found — GP will NOT include Apple's spare-part incentive.")
+        return {}
+    df = xls.parse("GP", header=None)
+    overrides = {}
+    i, n = 0, len(df)
+    blocks_found = 0
+    while i < n:
+        first_cell = df.iat[i, 0]
+        if isinstance(first_cell, str) and first_cell.strip() in ("Branch ID", "Centre Name"):
+            blocks_found += 1
+            header_row = df.iloc[i]
+            month_cols = []
+            for col in range(1, df.shape[1]):
+                mk = month_key_from_any(header_row[col])
+                if mk is None:
+                    break
+                month_cols.append((col, mk))
+            j = i + 1
+            while j < n:
+                centre = df.iat[j, 0]
+                if pd.isna(centre):
+                    break
+                centre = str(centre).strip()
+                if centre.lower() == "grand total":
+                    j += 1
+                    break
+                for col, mk in month_cols:
+                    val = df.iat[j, col]
+                    if not pd.isna(val):
+                        try:
+                            overrides[(mk, centre)] = round(float(val), 2)
+                        except (TypeError, ValueError):
+                            pass
+                j += 1
+            i = j
+        else:
+            i += 1
+    print(f"GP report: found {blocks_found} fiscal-year block(s), "
+          f"{len(overrides)} centre/month figures (incentive-inclusive).")
+    return overrides
+
+
 def group_sum(df, group_cols):
     g = df.groupby(group_cols, dropna=False).agg(
         Revenue=("Total", "sum"),
@@ -370,6 +429,63 @@ def main():
           f"{raw['MonthKey'].nunique()} month(s) and {raw['Branch ID'].nunique()} centre(s).")
 
     fact_month = group_sum(raw, ["MonthKey", "Branch ID"]).rename(columns={"Branch ID": "Centre"})
+    fact_day = group_sum(raw, ["DateStr", "Branch ID"]).rename(columns={"Branch ID": "Centre"})
+    fact_day = fact_day.dropna(subset=["DateStr"])
+
+    # Apply the GP report's incentive-inclusive figures on top of the
+    # transaction-derived GP — see parse_gp_report(). This adjusts:
+    #   - fact_month (the headline figure used by Executive Overview, GP
+    #     tab, trends)
+    #   - fact_day, by adding each month's delta onto that centre's first
+    #     day of the month. The KPI cards compute their "exact" totals
+    #     from fact_day (so a custom date range can be precise to the
+    #     day), so fact_month alone isn't enough — without this, the
+    #     headline numbers silently keep excluding the incentive even
+    #     though fact_month looks correct. There's no data attributing the
+    #     incentive to a specific day, so "posted on day 1 of the month" is
+    #     a deliberate, documented modeling choice: it's captured
+    #     correctly by any FY/quarter/full-month filter, and only missed
+    #     by a custom range that excludes day 1.
+    # Every OTHER breakdown (fact_bu, fact_cat, fact_pf, fact_item,
+    # fact_txntype, fact_exec) intentionally stays transaction-only —
+    # there's no basis to attribute the incentive to a business unit,
+    # category, item, or associate either. This is exactly what the
+    # dashboard's "GP coverage" caveat banner communicates.
+    gp_overrides = parse_gp_report(xls)
+    covered_months = set()
+    fact_month = fact_month.set_index(["MonthKey", "Centre"], drop=False)
+    fact_day = fact_day.set_index(["DateStr", "Centre"], drop=False)
+    for (mk, centre), gp_val in gp_overrides.items():
+        covered_months.add(mk)
+        if (mk, centre) in fact_month.index:
+            raw_gp = float(fact_month.loc[(mk, centre), "GP"])
+            fact_month.loc[(mk, centre), "GP"] = gp_val
+        else:
+            # GP report has a figure (pure incentive, presumably) for a
+            # centre/month with no matching transactions at all — still
+            # worth surfacing rather than silently dropping.
+            raw_gp = 0.0
+            new_row = pd.DataFrame([{"MonthKey": mk, "Centre": centre,
+                                      "Revenue": 0.0, "GP": gp_val, "Txns": 0}])
+            fact_month = pd.concat([fact_month.reset_index(drop=True), new_row], ignore_index=True)
+            fact_month = fact_month.set_index(["MonthKey", "Centre"], drop=False)
+
+        delta = round(gp_val - raw_gp, 2)
+        if abs(delta) > 0.005:
+            first_day = f"{mk // 100:04d}-{mk % 100:02d}-01"
+            day_key = (first_day, centre)
+            if day_key in fact_day.index:
+                fact_day.loc[day_key, "GP"] = float(fact_day.loc[day_key, "GP"]) + delta
+            else:
+                new_day_row = pd.DataFrame([{"DateStr": first_day, "Centre": centre,
+                                              "Revenue": 0.0, "GP": delta, "Txns": 0}])
+                fact_day = pd.concat([fact_day.reset_index(drop=True), new_day_row], ignore_index=True)
+                fact_day = fact_day.set_index(["DateStr", "Centre"], drop=False)
+    fact_month = fact_month.reset_index(drop=True)
+    fact_day = fact_day.reset_index(drop=True)
+    print(f"Applied GP-report figures to {len(covered_months)} month(s): "
+          f"{sorted(covered_months)}")
+
     fact_bu = group_sum(raw, ["MonthKey", "Branch ID", "Business Unit"]).rename(
         columns={"Branch ID": "Centre", "Business Unit": "BU"})
     fact_cat = group_sum(raw, ["MonthKey", "Branch ID", "Category"]).rename(
@@ -382,8 +498,6 @@ def main():
         columns={"Branch ID": "Centre", "Transaction Type": "TxnType"})
     fact_exec = group_sum(raw, ["Branch ID", "Executive"]).rename(
         columns={"Branch ID": "Centre"})
-    fact_day = group_sum(raw, ["DateStr", "Branch ID"]).rename(columns={"Branch ID": "Centre"})
-    fact_day = fact_day.dropna(subset=["DateStr"])
 
     month_keys = sorted(fact_month["MonthKey"].unique().tolist())
     months = []
@@ -399,7 +513,7 @@ def main():
 
     data = {
         "months": months,
-        "gpCoveredMonths": month_keys,  # all months currently treated as GP-covered
+        "gpCoveredMonths": sorted(covered_months),
         "centres": build_centres(xls, raw),
         "fact_month": to_records(fact_month, ["MonthKey", "Centre", "Revenue", "GP", "Txns"]),
         "fact_bu": to_records(fact_bu, ["MonthKey", "Centre", "BU", "Revenue", "GP", "Txns"]),
