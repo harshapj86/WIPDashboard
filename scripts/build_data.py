@@ -202,6 +202,9 @@ def load_raw_data(xls):
         blank_mask = raw[col].astype(str).str.strip().isin(["", "NA", "None", "nan"])
         raw.loc[blank_mask, col] = label
 
+    raw = normalize_casing(raw, ["Business Unit", "Category", "Product Family",
+                                  "Item_Name", "Executive", "Transaction Type"])
+
     raw["Total"] = pd.to_numeric(raw["Total"], errors="coerce").fillna(0.0)
     raw["GP AT Amount"] = pd.to_numeric(raw["GP AT Amount"], errors="coerce").fillna(0.0)
 
@@ -294,6 +297,33 @@ def parse_gp_report(xls):
     return overrides
 
 
+def normalize_casing(df, columns):
+    """Collapse values that differ only by case or leading/trailing
+    whitespace into one canonical spelling — the most frequent variant
+    already in the data — so the same real-world category doesn't get
+    split into separate rows across every breakdown and trend chart (e.g.
+    'Incident fees' vs 'Incident Fees' showing as two different business
+    units, each with fake zero-gaps wherever the other casing was used
+    that month). Applied to every grouping column, not only the ones with
+    known drift today, so a new inconsistency introduced by a future
+    sheet gets caught automatically instead of silently fragmenting a
+    chart again.
+    """
+    for col in columns:
+        if col not in df.columns:
+            continue
+        stripped = df[col].astype(str).str.strip()
+        norm_key = stripped.str.lower()
+        canonical = stripped.groupby(norm_key).transform(lambda s: s.value_counts().idxmax())
+        distinct_before = stripped.nunique()
+        distinct_after = canonical.nunique()
+        if distinct_before != distinct_after:
+            print(f"Normalized casing/whitespace for '{col}': "
+                  f"{distinct_before} -> {distinct_after} distinct values.")
+        df[col] = canonical
+    return df
+
+
 def group_sum(df, group_cols):
     g = df.groupby(group_cols, dropna=False).agg(
         Revenue=("Total", "sum"),
@@ -328,8 +358,8 @@ def build_centres(xls, raw):
         lm.columns = [str(c).strip() for c in lm.columns]
         for _, r in lm.iterrows():
             centre = str(r.get("Centre Name", "")).strip()
-            if not centre:
-                continue
+            if not centre or centre.lower() == "grand total":
+                continue  # summary row, not a real centre
             loc_master[centre] = {
                 "ARM": str(r.get("ARM", "")).strip() or "Unmapped",
                 "State": str(r.get("State", "")).strip() or "Unmapped",
@@ -415,15 +445,11 @@ def build_csat(xls):
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("workbook", help="Path to the master .xlsx file")
-    ap.add_argument("--out", default="data.json", help="Output path for data.json")
-    args = ap.parse_args()
-
-    print(f"Reading {args.workbook} ...")
-    xls = pd.ExcelFile(args.workbook)
-
+def build_master_data(xls):
+    """Runs the full pipeline and returns the master data dict (everything,
+    no access restrictions) — the single source of truth that both the
+    plain single-bundle build and the per-tier bundler build from.
+    """
     raw = load_raw_data(xls)
     print(f"Loaded {len(raw):,} raw transaction line(s) across "
           f"{raw['MonthKey'].nunique()} month(s) and {raw['Branch ID'].nunique()} centre(s).")
@@ -511,7 +537,7 @@ def main():
             "FYQ": f"{fy} {q}",
         })
 
-    data = {
+    return {
         "months": months,
         "gpCoveredMonths": sorted(covered_months),
         "centres": build_centres(xls, raw),
@@ -528,6 +554,17 @@ def main():
         "target_gp": melt_month_sheet(xls, "GP Target"),
         "target_csat": melt_month_sheet(xls, "CSAT Target"),
     }
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("workbook", help="Path to the master .xlsx file")
+    ap.add_argument("--out", default="data.json", help="Output path for data.json")
+    args = ap.parse_args()
+
+    print(f"Reading {args.workbook} ...")
+    xls = pd.ExcelFile(args.workbook)
+    data = build_master_data(xls)
 
     import os
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
