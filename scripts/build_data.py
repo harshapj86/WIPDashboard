@@ -445,15 +445,11 @@ def build_csat(xls):
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("workbook", help="Path to the master .xlsx file")
-    ap.add_argument("--out", default="data.json", help="Output path for data.json")
-    args = ap.parse_args()
-
-    print(f"Reading {args.workbook} ...")
-    xls = pd.ExcelFile(args.workbook)
-
+def build_master_data(xls):
+    """Runs the full pipeline and returns the master data dict (everything,
+    no access restrictions) — the single source of truth that both the
+    plain single-bundle build and the per-tier bundler build from.
+    """
     raw = load_raw_data(xls)
     print(f"Loaded {len(raw):,} raw transaction line(s) across "
           f"{raw['MonthKey'].nunique()} month(s) and {raw['Branch ID'].nunique()} centre(s).")
@@ -541,7 +537,7 @@ def main():
             "FYQ": f"{fy} {q}",
         })
 
-    data = {
+    return {
         "months": months,
         "gpCoveredMonths": sorted(covered_months),
         "centres": build_centres(xls, raw),
@@ -558,6 +554,17 @@ def main():
         "target_gp": melt_month_sheet(xls, "GP Target"),
         "target_csat": melt_month_sheet(xls, "CSAT Target"),
     }
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("workbook", help="Path to the master .xlsx file")
+    ap.add_argument("--out", default="data.json", help="Output path for data.json")
+    args = ap.parse_args()
+
+    print(f"Reading {args.workbook} ...")
+    xls = pd.ExcelFile(args.workbook)
+    data = build_master_data(xls)
 
     import os
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
