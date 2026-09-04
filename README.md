@@ -1,139 +1,58 @@
 # Aptronix Service — Executive Dashboard
 
-A self-updating, access-controlled executive dashboard for Aptronix service
-centre performance: revenue, gross profit, CSAT, licenses, targets,
-ARM/centre breakdowns, and AI-generated insights — all driven from one
-master Excel workbook, with genuinely separate data per access tier.
+A live, self-updating executive dashboard for Aptronix service centre
+performance: revenue, gross profit, CSAT, licenses, targets, ARM/centre
+breakdowns, and AI-generated insights — all driven from one master Excel
+workbook.
 
-**Hosting:** Cloudflare Pages + Cloudflare Access (both free at this scale).
-Set up once per "Publish it" below — everything after that is automatic.
-
----
-
-## How it works, end to end
-
-```
-source/master.xlsx  ──┐
-access/settings.csv ──┼──►  scripts/build_access_bundles.py  ──►  dist/<tier>/  ──►  Cloudflare Pages
-access/roles.csv    ──┘         (runs automatically in CI)         (one bundle          (one URL path
-                                                                      per role)            per bundle,
-                                                                                            gated by
-                                                                                          Cloudflare Access)
-```
-
-1. You edit `source/master.xlsx` (transactions/targets/CSAT), `access/roles.csv`
-   (who's in which tier), or `access/settings.csv` (GP visibility per tier) —
-   and push.
-2. A GitHub Action (`.github/workflows/deploy-cloudflare.yml`) rebuilds
-   **every** access-tier bundle fresh from scratch and deploys the result to
-   Cloudflare Pages. Nothing is cached between runs, so there's no way for a
-   bundle to go stale.
-3. Cloudflare Access sits in front of every bundle's URL path and only lets
-   through the email addresses you've assigned to that tier/scope. Someone
-   without permission never receives that bundle's `data.json` at all — this
-   is real separation, not a hidden URL or a UI toggle.
-
-## Access tiers
-
-| Tier | Sees | Scope column in `access/roles.csv` |
-|---|---|---|
-| **Admin** | Every centre | (leave blank) |
-| **Area Manager** | Only centres under their ARM | The ARM name, exactly as it appears in the workbook's Location Master sheet |
-| **Centre Manager** | Only their one centre | The exact centre name, as in Location Master |
-
-Each unique (tier, scope) combination becomes one URL path:
-- Admin → `/admin/`
-- Area Manager for "Naveen Sukka" → `/area-naveen-sukka/`
-- Centre Manager for "Service Abids" → `/centre-service-abids/`
-
-Multiple people can share one bundle (e.g. two people managing the same
-centre) — just add both as separate rows in `access/roles.csv` with the same
-Tier and Scope; they'll both be granted access to the same URL in Cloudflare
-Access.
-
-### `access/roles.csv`
-
-```
-Email,Tier,Scope
-owner@example.com,Admin,
-you@example.com,Admin,
-naveen.sukka@example.com,Area Manager,Naveen Sukka
-manager.abids@example.com,Centre Manager,Service Abids
-```
-
-Replace the example rows with your real people before going live — the
-placeholder `@example.com` addresses won't match anyone.
-
-### `access/settings.csv` — the GP toggle
-
-```
-Tier,ShowGP
-Admin,TRUE
-Area Manager,TRUE
-Centre Manager,TRUE
-```
-
-Currently every tier sees GP. Flip any row to `FALSE` and push to hide GP
-figures for that tier — same rebuild-and-deploy flow as any other change,
-live in about a minute. (If you do this, the underlying number is genuinely
-removed from that tier's `data.json`, not just hidden in the browser — real
-security, not a UI toggle.)
+**Live site:** `https://<your-username>.github.io/<repo-name>/` (set up in
+"Publish it on GitHub Pages" below).
 
 ---
 
-## Publish it: one-time setup
+## How self-updating works
 
-### 1. Cloudflare Pages (hosting)
+```
+source/master.xlsx  →  scripts/build_data.py  →  data.json  →  index.html
+   (you edit this)      (runs automatically)     (generated)   (reads this)
+```
 
-1. Sign up at dash.cloudflare.com (free).
-2. **Workers & Pages → Create application → Pages → Get started → Upload assets**
-   (**not** "Connect to Git" — this repo's GitHub Action does the building
-   and pushes the finished result directly, so Cloudflare doesn't need to
-   build anything itself).
-3. Name the project `aptronix-dashboard` (or update `projectName` in
-   `.github/workflows/deploy-cloudflare.yml` to match whatever you name it),
-   then drag in any single placeholder file just to finish creating the
-   project — the GitHub Action will overwrite it with the real bundles on
-   its first run. Select **Deploy site**.
-4. Get your credentials for the next step:
-   - **Account ID**: shown on the right sidebar of any page in the Cloudflare
-     dashboard.
-   - **API Token**: **My Profile → API Tokens → Create Token → Custom Token
-     → Account, Cloudflare Pages, Edit → Continue to summary → Create Token**.
-5. In this GitHub repo: **Settings → Secrets and variables → Actions**, add:
-   - `CLOUDFLARE_API_TOKEN`
-   - `CLOUDFLARE_ACCOUNT_ID`
-6. Push anything (or re-run the workflow manually from the **Actions** tab)
-   — the Action builds every bundle and deploys to
-   `https://aptronix-dashboard.pages.dev/<tier-slug>/`.
+1. You update `source/master.xlsx` with new transactions, targets, or CSAT
+   scores — the same workbook, same sheet names, no new format to learn —
+   and push it to this repo (upload via GitHub's web UI, or `git push`).
+2. That push automatically triggers a **GitHub Action**
+   (`.github/workflows/update-dashboard.yml`), which runs
+   `scripts/build_data.py` against the workbook and regenerates `data.json`.
+3. The Action commits the new `data.json` back to the repo.
+4. GitHub Pages redeploys automatically on every commit, so the live
+   dashboard picks up the new data — typically within 1–2 minutes of your
+   upload, no manual rebuild step required.
 
-### 2. Cloudflare Access (who can see what)
+You can also trigger a rebuild manually any time from the repo's
+**Actions** tab → *Rebuild dashboard data* → **Run workflow** — useful if
+you've edited `source/master.xlsx` some other way and want to force a
+refresh.
 
-This is a **separate Cloudflare product** (Zero Trust) — free for up to 50
-users.
+### Why it's split this way
 
-1. In the Cloudflare dashboard, open **Zero Trust** from the left nav. The
-   first time, it asks you to pick a **team name** and confirm the **Free**
-   plan.
-2. **Zero Trust → Settings → Authentication → Login methods → Add new →
-   One-time PIN.** This is no longer on by default for new accounts — skip
-   it and nobody can ever log in, since no login email gets sent.
-3. **Zero Trust → Access → Applications → Add an application → Self-hosted.**
-4. After the first deploy, open `dist/_bundle-map.csv` (generated by the
-   build, not committed to git — download it from the Action's run summary,
-   or run the build script locally) for the exact path and email list to use
-   for each application. For each row:
-   - **Application domain**: `aptronix-dashboard.pages.dev`
-   - **Path**: the `path` column (e.g. `/centre-service-abids/*`)
-   - **Policy**: Allow → Include → **Emails** → paste the addresses from the
-     `emails` column
-5. Repeat for every row in `_bundle-map.csv`, including `/admin/*`.
-
-Once this is set up, send each person the specific URL for their tier (e.g.
-`https://aptronix-dashboard.pages.dev/centre-service-abids/`). Visiting it
-prompts them to verify their email before they see anything.
+The dashboard used to have every number typed directly into the HTML file
+by hand. Now `index.html` is just the display logic — it fetches
+`data.json` at load time instead. `data.json` is never hand-edited; it's
+always a mechanical, reproducible output of `build_data.py` run against
+`source/master.xlsx`. Updating the dashboard is now "replace the Excel
+file," not "re-paste a decade of numbers into HTML."
 
 ---
+
+## Repository structure
+
+```
+index.html                          the dashboard (fetches data.json at load)
+data.json                           generated — do not hand-edit
+source/master.xlsx                  the master workbook — edit this
+scripts/build_data.py               the Excel → data.json converter
+.github/workflows/update-dashboard.yml   auto-rebuild on every workbook push
+```
 
 ## What's in `source/master.xlsx`
 
@@ -143,20 +62,13 @@ The build script reads these sheets:
 |---|---|
 | Any sheet starting with **"Raw"** (`Raw Data 24-25`, `Raw Data 2025-26`, `Rawdata 26-27`, …) | All transaction-level data — revenue, GP, business unit, category, item, executive, day, txn type |
 | **GP** | Overrides the headline GP figure with Apple's spare-part incentive included (see "How Gross Profit is calculated" below) |
-| **Location Master** | Maps each centre to its ARM, State, and Location Type — also what `access/roles.csv` scopes are validated against |
+| **Location Master** | Maps each centre to its ARM, State, and Location Type |
 | **CSAT** | Monthly CSAT % per centre |
 | **Revenue Target**, **GP Target**, **CSAT Target** | Monthly targets per centre |
 
 One sheet (`Revenue ` — note the trailing space in its name) holds legacy
 FY22-23 reference data from before this dashboard existed and is **not**
 read by the build script.
-
-**This workbook is never opened and re-saved by any script here** — only
-read. (Earlier in building this, adding sheets directly to it via a
-load-then-save round-trip silently corrupted formula-derived date columns
-in two of the raw-data sheets. Access configuration lives in the separate
-`access/*.csv` files specifically to avoid ever touching this file's
-contents again.)
 
 ### How Gross Profit is calculated
 
@@ -193,46 +105,104 @@ dashboard you're looking at:
   for attributing a lump-sum incentive to a specific category or associate.
   So on months with a real incentive, you'll correctly see the headline GP
   run higher than what those breakdowns sum to on their own; that gap *is*
-  the incentive. `gpCoveredMonths` in each bundle's `data.json` lists exactly
-  which months the GP sheet had a figure for, which is what the dashboard's
-  "GP coverage" indicator is built from.
+  the incentive. `gpCoveredMonths` in `data.json` lists exactly which
+  months the GP sheet had a figure for, which is what the dashboard's "GP
+  coverage" indicator is built from.
 
 ### Adding a new fiscal year
 
 Just add a new sheet named `Raw Data <whatever>` (as long as the name
 starts with "Raw") with the same columns as the existing ones, and push.
+The build script picks up *every* sheet matching that pattern automatically
+— you don't need to touch `build_data.py` or the workflow file.
+
+### Adding a new centre
+
+Add a row to **Location Master** with its ARM, State, and Location Type.
+If a centre appears in the raw data but not in Location Master, the build
+script still includes it — with State/ARM set to `Unmapped` and Location
+Type defaulted to `Repair Drop Off` — so nothing breaks, but you'll want to
+add the real mapping when you get a chance.
+
+---
+
+## Running the build yourself (optional)
+
+You don't need to do this — the GitHub Action does it automatically on
+every push to `source/master.xlsx`. But if you want to check the output
+locally before pushing:
+
+```bash
+pip install pandas openpyxl
+python scripts/build_data.py source/master.xlsx --out data.json
+```
+
+The script prints a summary (rows loaded, months found, centres found) and
+any warnings (e.g. unparseable month columns) so you can sanity-check
+before committing.
+
+---
+
+## Publish it on GitHub Pages
+
+1. Create a new GitHub repository (public — GitHub Pages on a free
+   personal account only serves public repos).
+2. Push everything in this folder to that repository (root of the repo,
+   not a subfolder) — either drag-and-drop upload via the GitHub web UI,
+   or:
+   ```bash
+   git init
+   git remote add origin https://github.com/<your-username>/<repo-name>.git
+   git add .
+   git commit -m "Initial dashboard"
+   git branch -M main
+   git push -u origin main
+   ```
+3. In the repo, go to **Settings → Pages**.
+4. Under **Build and deployment → Source**, choose **Deploy from a branch**.
+5. Under **Branch**, select `main` and folder `/ (root)`, then **Save**.
+6. GitHub publishes at `https://<your-username>.github.io/<repo-name>/`
+   within a minute or two of the first push.
+
+From then on: **edit `source/master.xlsx`, push it, wait a minute or two —
+the live dashboard updates itself.**
 
 ---
 
 ## Known limitations / things worth knowing
 
-- **Cloudflare Access gates the page, not the download.** Once someone is
-  authenticated, their browser does receive their tier's full `data.json` —
-  that's unavoidable for a client-rendered dashboard. What Access actually
-  guarantees is that *only* their tier's data (already filtered at build
-  time) ever reaches them; someone in Centre Manager tier can inspect their
-  own centre's numbers in dev tools, but never another centre's, because
-  those numbers were never sent to their browser in the first place.
-- **`access/roles.csv` scope values must match Location Master exactly**
-  (same spelling, same case) — the build script prints a warning and skips
-  a role row if an Area Manager's ARM name or a Centre Manager's centre name
-  doesn't match anything, rather than guessing.
-- **Casing/whitespace normalization.** Text values in `Business Unit`
-  and `Category` weren't spelled identically across fiscal years (e.g.
-  "Incident Fees" vs "Incident fees"). Earlier this was treated as
-  cosmetic, but it isn't — it silently splits one real category into two,
-  which shows up as fake zero-gaps in trend charts wherever the other
-  casing was used that month. `build_data.py` now collapses any column
-  used for grouping (Business Unit, Category, Product Family, Item,
-  Executive, Transaction Type) to its most-frequent spelling wherever case
-  or leading/trailing whitespace is the only difference, and prints how
-  many distinct values it merged so you can sanity-check after adding a
-  new year's sheet.
+- **No access control.** A public GitHub Pages repo has no login — anyone
+  with the link can view the dashboard and, via browser dev tools, the
+  underlying `data.json`. Don't publish this way if the numbers need to
+  stay private. (We discussed real access-control options earlier — pre-split
+  builds behind Cloudflare Access, or a proper backend — if you want to
+  revisit that.)
+- **`data.json` loads via a `fetch()` request**, which needs a real
+  HTTP(S) server — exactly what GitHub Pages is. It will *not* work if you
+  double-click `index.html` and open it straight from your hard drive
+  (`file://`); you'll see a "could not load data.json" message on the
+  loading screen in that case, with the specific error underneath it.
+  Always test through the published URL (or a local static server like
+  `python -m http.server`), not by opening the file directly.
+- **Date columns must be real dates, not text.** `TXNDate` in the raw
+  sheets needs to be an actual Excel date cell. `build_data.py` handles
+  both real dates and plain `DD-MM-YYYY` text (one early sheet used text),
+  but an unrecognised date format on a *new* sheet would silently drop
+  that sheet's rows from the daily view only (`fact_day`) — everything
+  else (fact_month, fact_bu, etc., and therefore every chart and KPI)
+  stays correct, since only fact_day depends on day-level dates. The build
+  script prints a warning naming the row count if this happens, so check
+  the Action log after adding a new year's sheet.
 - **"Product Family" data quality.** That column in the raw sheets is
   inconsistently filled (sometimes blank, sometimes has an item code
   pasted in by mistake). The build script buckets blanks into "Other" —
   functional, but the fact_pf breakdown will only get cleaner if the
   source column does.
+- **"Business Unit" spelling/casing drift across fiscal years.** e.g.
+  "Incident Fees" vs "Incident fees" show up as separate filter options
+  because the raw sheets don't spell it identically every year. Cosmetic —
+  each variant still totals correctly — but worth standardising in the
+  source sheets if it bothers you.
 - **Chart.js and Lucide icons load from a CDN** with automatic fallbacks
   (cdnjs → jsDelivr → unpkg). If a viewer's network blocks all three,
   charts fall back to a text notice and nav icons fall back to plain
@@ -242,16 +212,9 @@ starts with "Raw") with the same columns as the existing ones, and push.
 - Fully responsive: sidebar becomes a slide-out drawer, tables scroll
   horizontally, and the filter bar reflows to one column below ~480px.
 
-## Running the build yourself (optional)
+## Updating the dashboard's *code* (not the data)
 
-You don't need to — the GitHub Action does this automatically on every
-relevant push. To check locally before pushing:
+Data changes → just edit `source/master.xlsx` and push, as above.
 
-```bash
-pip install pandas openpyxl
-python scripts/build_access_bundles.py source/master.xlsx index.html --out-dir dist
-```
-
-Prints a summary per bundle (tier, scope, centre count, GP visibility,
-which emails) and writes `dist/_bundle-map.csv` for setting up Cloudflare
-Access policies.
+Code/design changes (new features, styling, new views) → edit `index.html`
+directly and push; GitHub Pages redeploys on every commit the same way.

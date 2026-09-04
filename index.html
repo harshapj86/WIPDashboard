@@ -300,28 +300,6 @@ table.data-table td.num{text-align:right;font-variant-numeric:tabular-nums;}
 .hero-card .eyebrow{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#f5b942;font-weight:700;margin-bottom:8px;}
 .hero-card p{color:#c9d3ec;font-size:13px;line-height:1.6;margin:6px 0 0 0;}
 
-/* ---------- Live projection card (Targets tab) ---------- */
-.proj-card{
-  border-radius:18px;padding:24px 26px;margin-bottom:20px;color:#fff;
-  background:linear-gradient(135deg,#0d1b3a 0%, #122452 100%);
-}
-.proj-card.proj-good{background:linear-gradient(135deg,#0a3d2e 0%, #0f5c45 100%);}
-.proj-card.proj-warn{background:linear-gradient(135deg,#4a3208 0%, #6b481a 100%);}
-.proj-card.proj-bad{background:linear-gradient(135deg,#4a0f0f 0%, #6b1a1a 100%);}
-.proj-card .eyebrow{font-size:10px;letter-spacing:1px;text-transform:uppercase;color:#f5b942;font-weight:700;margin-bottom:10px;}
-.proj-card .proj-main{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-end;}
-.proj-card .proj-big{font-family:var(--font-display);font-size:34px;font-weight:700;line-height:1;}
-.proj-card .proj-big-label{font-size:11px;color:#c9d3ec;margin-top:6px;}
-.proj-card .proj-pill{display:inline-block;font-size:13px;font-weight:700;padding:4px 12px;border-radius:20px;background:rgba(255,255,255,.15);}
-.proj-card .proj-sub{font-size:12.5px;color:#dbe3f5;margin-top:14px;line-height:1.6;}
-.proj-card .proj-foot{font-size:10.5px;color:#9fb0d6;margin-top:10px;}
-
-.suggest-note{
-  font-size:12px;color:var(--text-dim);background:var(--panel-2);border:1px solid var(--border);
-  border-radius:10px;padding:12px 14px;margin-bottom:14px;line-height:1.55;
-}
-.suggest-note b{color:var(--text);}
-
 footer{text-align:center;color:var(--text-faint);font-size:11px;padding:30px 24px;}
 
 /* ---------- Mobile nav (hamburger + off-canvas sidebar) ---------- */
@@ -512,7 +490,6 @@ const LOC_TYPES = [...new Set(CENTRES.map(c=>c.LocationType))].sort();
 const TXN_TYPES = [...new Set(FACT_TXNTYPE.map(r=>r[2]))].sort();
 
 const fmtINR = (n)=>{
-  if(n===null || n===undefined || Number.isNaN(n)) return '—';
   const sign = n<0?'-':'';
   n = Math.abs(n);
   if(n>=1e7) return sign+'₹'+(n/1e7).toFixed(2)+'Cr';
@@ -520,19 +497,11 @@ const fmtINR = (n)=>{
   if(n>=1e3) return sign+'₹'+(n/1e3).toFixed(1)+'K';
   return sign+'₹'+n.toFixed(0);
 };
-const fmtNum = (n)=> (n===null||n===undefined||Number.isNaN(n)) ? '—' : n.toLocaleString('en-IN',{maximumFractionDigits:0});
-const fmtPct = (n)=> (n===null||n===undefined||Number.isNaN(n)) ? '—' : (n>=0?'+':'')+n.toFixed(1)+'%';
+const fmtNum = (n)=> n.toLocaleString('en-IN',{maximumFractionDigits:0});
+const fmtPct = (n)=> (n>=0?'+':'')+n.toFixed(1)+'%';
 const monthLabel = (mk)=> MONTH_MAP[mk]?MONTH_MAP[mk].MonthLabel:mk;
-// null/undefined propagate (a GP-stripped bundle has GP=null, so any ratio
-// built from it — GP%, MoM, etc. — should also come out null and render as
-// "—", not a misleading 0 or 0%.
-const safeDiv = (a,b)=> (a===null||a===undefined||b===null||b===undefined) ? null : (b===0?0:a/b);
+const safeDiv = (a,b)=> b===0?0:a/b;
 const dateToMonthKey = (dateStr)=>{ const [y,m] = dateStr.split('-'); return parseInt(y)*100+parseInt(m); };
-// Set per-bundle by build_access_bundles.py (default true — the plain
-// single-file build via build_data.py always shows GP). Controls whether
-// the Gross Profit tab and the GP-specific KPI cards on other tabs render
-// at all; GP being null anywhere else already renders as "—" regardless.
-const GP_VISIBLE = RAW.gpVisible !== false;
 
 /* ------------------------------------------------------------
    Global filter state + drill path
@@ -568,8 +537,7 @@ function restoreFromURL(){
   if(!location.hash || location.hash.length<2) return;
   try{
     const payload = JSON.parse(decodeURIComponent(location.hash.slice(1)));
-    const visibleTabIds = new Set(GROUPS.flatMap(g=>g.ids));
-    if(payload.t && TAB_MAP[payload.t] && visibleTabIds.has(payload.t)) activeTab = payload.t;
+    if(payload.t && TAB_MAP[payload.t]) activeTab = payload.t;
     if(payload.s && typeof payload.s==='object'){
       Object.keys(state).forEach(k=>{
         if(payload.s[k]!==undefined) state[k]=payload.s[k];
@@ -679,199 +647,6 @@ function getFilteredCSAT(){
   }
   return out;
 }
-/* ------------------------------------------------------------
-   Working-day-aware month projection + seasonally-informed target
-   suggestions — service centres are closed Sundays, so every "days
-   elapsed" / "days in month" calculation here counts Mon-Sat only.
-   ------------------------------------------------------------ */
-function mkToLabel(mk){
-  const y = Math.floor(mk/100), m = mk%100;
-  const names=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return names[m-1]+' '+String(y).slice(2);
-}
-function nextMonthKey(mk){ const y=Math.floor(mk/100), m=mk%100; return m===12?(y+1)*100+1:y*100+(m+1); }
-function prevMonthKey(mk){ const y=Math.floor(mk/100), m=mk%100; return m===1?(y-1)*100+12:y*100+(m-1); }
-function daysInMonth(mk){ const y=Math.floor(mk/100), m=mk%100; return new Date(y,m,0).getDate(); }
-function workingDaysInMonth(mk){
-  const y=Math.floor(mk/100), m=mk%100, total=daysInMonth(mk);
-  let wd=0;
-  for(let d=1; d<=total; d++){ if(new Date(y,m-1,d).getDay()!==0) wd++; }
-  return wd;
-}
-function workingDaysElapsed(mk, uptoDay){
-  const y=Math.floor(mk/100), m=mk%100;
-  let wd=0;
-  for(let d=1; d<=uptoDay; d++){ if(new Date(y,m-1,d).getDay()!==0) wd++; }
-  return wd;
-}
-/* Target lookups that ignore the user's date-range filter (a live "today"
-   projection, or a suggestion for an upcoming month, needs to work
-   regardless of whatever historical period someone happens to have
-   selected on screen) but still respect centre/ARM/state filters, so an
-   Area Manager or Centre Manager only ever sees their own scope. */
-function getTargetForMonth(arr, mk){
-  let sum=0;
-  for(const [tmk,c,v] of arr){ if(tmk===mk && centreMatches(c)) sum+=v; }
-  return sum;
-}
-function getTargetForMonthCentre(arr, mk, centre){
-  for(const [tmk,c,v] of arr){ if(tmk===mk && c===centre) return v; }
-  return null;
-}
-
-function computeLiveProjection(){
-  const now = new Date();
-  const y=now.getFullYear(), m=now.getMonth()+1, d=now.getDate();
-  const mk = y*100+m;
-  const totalWD = workingDaysInMonth(mk);
-  const elapsedWD = workingDaysElapsed(mk, d);
-  const monthPrefix = `${y}-${String(m).padStart(2,'0')}`;
-  const todayStr = `${monthPrefix}-${String(d).padStart(2,'0')}`;
-
-  let revenueSoFar = 0, anyDataThisMonth = false;
-  for(const [ds,c,rev] of FACT_DAY){
-    if(!ds.startsWith(monthPrefix)) continue;
-    if(!centreMatches(c)) continue;
-    anyDataThisMonth = true;
-    if(ds<=todayStr) revenueSoFar += rev;
-  }
-  if(!anyDataThisMonth) return {noData:true, mk};
-
-  const target = getTargetForMonth(TARGET_REVENUE, mk);
-  const dailyRate = elapsedWD>0 ? revenueSoFar/elapsedWD : 0;
-  const projected = dailyRate * totalWD;
-  const expectedToDate = (target>0 && totalWD>0) ? target*(elapsedWD/totalWD) : null;
-  const paceVsExpected = (expectedToDate!==null && expectedToDate>0) ? safeDiv(revenueSoFar-expectedToDate, expectedToDate)*100 : null;
-  const projectedAchPct = target>0 ? safeDiv(projected,target)*100 : null;
-
-  return {noData:false, mk, totalWD, elapsedWD, revenueSoFar, target, projected, expectedToDate, paceVsExpected, projectedAchPct};
-}
-
-/* ------------------------------------------------------------
-   Seasonal decomposition for target suggestions.
-
-   Sanity-checked against the full history (see conversation / README):
-   consistent-panel data shows Oct/Aug/Nov/Jul running meaningfully above
-   average and Feb/Mar/Sep below — notably, September dips rather than
-   peaking despite being deep in monsoon season, so "monsoon = high" isn't
-   quite right; the real lean season is Feb-Mar. The model below is
-   computed dynamically from whatever data exists at build time, so this
-   picture refines itself automatically as more months come in — nothing
-   here is a hardcoded assumption from one point-in-time analysis.
-   ------------------------------------------------------------ */
-function getConsistentCentreSet(){
-  // Centres present in every month currently in the dataset, AND flagged
-  // as a full "Service Centre" (not a Repair Drop Off Location) in
-  // Location Master. Newly opened full centres would otherwise make
-  // revenue look "seasonally" higher just because there are more
-  // centres, not more demand per centre — and drop-off points run at
-  // such low, sporadic volume (often near-zero some months) that their
-  // month-to-month swings are noise, not seasonality, and would dilute
-  // a genuine footfall signal if mixed in. This isolates seasonality to
-  // the centres actually generating meaningful, comparable revenue.
-  const monthsByCentre = {};
-  const allMonths = new Set(FACT_MONTH.map(r=>r[0]));
-  FACT_MONTH.forEach(([mk,c])=>{ (monthsByCentre[c]=monthsByCentre[c]||new Set()).add(mk); });
-  return new Set(Object.keys(monthsByCentre).filter(c=>{
-    if(monthsByCentre[c].size!==allMonths.size) return false;
-    const meta = CENTRE_MAP[c];
-    return meta && meta.LocationType==='Service Centre';
-  }));
-}
-
-function computeSeasonalIndex(){
-  // 1.00 = an average month. Built only from COMPLETE fiscal years (12
-  // months each) so a partial current year can't skew any one month's
-  // index, and only from the consistent centre panel above.
-  const consistent = getConsistentCentreSet();
-  const monthly = {};
-  FACT_MONTH.forEach(([mk,c,rev])=>{ if(consistent.has(c)) monthly[mk]=(monthly[mk]||0)+rev; });
-
-  const byFY = {};
-  Object.keys(monthly).map(Number).forEach(mk=>{
-    const y=Math.floor(mk/100), m=mk%100, fyStart = m>=4?y:y-1;
-    (byFY[fyStart]=byFY[fyStart]||{})[mk]=monthly[mk];
-  });
-  const fullFYs = Object.keys(byFY).filter(fy=>Object.keys(byFY[fy]).length===12);
-
-  const ratiosByCalMonth = {};
-  fullFYs.forEach(fy=>{
-    const vals = byFY[fy];
-    const avg = Object.values(vals).reduce((a,b)=>a+b,0)/12;
-    Object.entries(vals).forEach(([mk,rev])=>{
-      const cm = Number(mk)%100;
-      (ratiosByCalMonth[cm]=ratiosByCalMonth[cm]||[]).push(rev/avg);
-    });
-  });
-  const index = {}, sampleYears = {};
-  for(let cm=1; cm<=12; cm++){
-    const rs = ratiosByCalMonth[cm];
-    index[cm] = rs && rs.length ? rs.reduce((a,b)=>a+b,0)/rs.length : 1.0;
-    sampleYears[cm] = rs ? rs.length : 0;
-  }
-  return {index, sampleYears, fullFYCount: fullFYs.length};
-}
-
-function computeSuggestedTargets(){
-  if(FACT_MONTH.length===0) return {targetMonth:null, rows:[], lowVolumeRows:[]};
-  const maxMk = FACT_MONTH.reduce((mx,r)=>r[0]>mx?r[0]:mx, FACT_MONTH[0][0]);
-  const targetMonth = nextMonthKey(maxMk);
-  const last3 = [prevMonthKey(prevMonthKey(maxMk)), prevMonthKey(maxMk), maxMk];
-  const {index: seasonalIndex, sampleYears, fullFYCount} = computeSeasonalIndex();
-  const targetCM = targetMonth % 100;
-  const idxTarget = seasonalIndex[targetCM] || 1;
-
-  // A centre is treated as "low volume" (drop-off point, or a genuinely
-  // new/nascent location) rather than run through the full seasonality +
-  // growth model if it's not a full Service Centre, or simply hasn't
-  // built up enough history yet — at that volume, month-to-month swings
-  // are noise, not signal, and dressing them up with the same model as
-  // an established centre would be actively misleading.
-  const LOW_VOLUME_MIN_MONTHS = 6;
-  const centresInScope = CENTRES.filter(c=>centreMatches(c.Centre));
-
-  const rows = [], lowVolumeRows = [];
-  for(const {Centre:centre, LocationType} of centresInScope){
-    const byMk = {};
-    FACT_MONTH.forEach(([mk,c,rev])=>{ if(c===centre) byMk[mk]=rev; });
-    const monthsWithData = Object.keys(byMk).length;
-    const isLowVolume = LocationType!=='Service Centre' || monthsWithData<LOW_VOLUME_MIN_MONTHS;
-    const existingTarget = getTargetForMonthCentre(TARGET_REVENUE, targetMonth, centre);
-
-    if(isLowVolume){
-      // Simple trailing average only — no seasonality or growth
-      // extrapolation applied, since neither is reliable at this volume.
-      const recentVals = last3.map(mk=>byMk[mk]).filter(v=>v!==undefined);
-      const simpleAvg = recentVals.length? recentVals.reduce((a,b)=>a+b,0)/recentVals.length : null;
-      lowVolumeRows.push({centre, locationType:LocationType, monthsWithData, simpleAvg, existingTarget});
-      continue;
-    }
-
-    let deseasoned=[];
-    for(const mk of last3){
-      const rev=byMk[mk];
-      if(rev===undefined) continue;
-      const idx = seasonalIndex[mk%100] || 1;
-      deseasoned.push(rev/idx);
-    }
-    const trendBase = deseasoned.length? deseasoned.reduce((a,b)=>a+b,0)/deseasoned.length : null;
-
-    let yoyGrowths=[];
-    for(const mk of last3){
-      const cur=byMk[mk], prevYr=byMk[mk-100];
-      if(prevYr>0 && cur!==undefined) yoyGrowths.push((cur-prevYr)/prevYr);
-    }
-    const avgYoY = yoyGrowths.length? yoyGrowths.reduce((a,b)=>a+b,0)/yoyGrowths.length : 0;
-    const dampedGrowth = Math.max(-0.4, Math.min(0.6, avgYoY*0.5));
-
-    const suggested = trendBase!==null ? trendBase*idxTarget*(1+dampedGrowth) : null;
-    rows.push({centre, trendBase, dampedGrowth, suggested, existingTarget});
-  }
-  rows.sort((a,b)=>(b.suggested||0)-(a.suggested||0));
-  lowVolumeRows.sort((a,b)=>(b.simpleAvg||0)-(a.simpleAvg||0));
-  return {targetMonth, seasonalIndex, sampleYears, fullFYCount, idxTarget, rows, lowVolumeRows};
-}
-
 function getFilteredTarget(arr){
   const out=[];
   for(const [mk,c,v] of arr){
@@ -1063,13 +838,10 @@ const TABS = [
 const TAB_MAP = Object.fromEntries(TABS.map(t=>[t.id,t]));
 
 /* Sidebar sections — purely a navigation grouping, doesn't change any
-   view logic. Collapsible so a 17-tab list doesn't read as a wall of text.
-   The dedicated GP tab is dropped entirely when this bundle has GP hidden
-   (Area Manager / Centre Manager tiers, per access/settings.csv) — a whole
-   tab full of "—" would be more confusing than just not showing it. */
+   view logic. Collapsible so a 17-tab list doesn't read as a wall of text. */
 const GROUPS = [
   {label:'Overview', ids:['exec']},
-  {label:'Financials', ids:['revenue', ...(GP_VISIBLE?['gp']:[]), 'targets','licenses']},
+  {label:'Financials', ids:['revenue','gp','targets','licenses']},
   {label:'Customer', ids:['csat']},
   {label:'Locations & Teams', ids:['centre','centreexplorer','stateperf','arm','armexplorer','geo']},
   {label:'Business Analysis', ids:['bu','growth','exceptions','rankings']},
@@ -2021,10 +1793,8 @@ function renderExec(){
 
   const kpis = el('div',{class:'kpi-grid'},[
     richKpiCard({label:'Revenue', value:fmtINR(totals.revenue), mom:g.revMoM, qoq:g.revQoQ, yoy:g.revYoY, spark:g.spark}),
-    ...(GP_VISIBLE ? [
-      richKpiCard({label:'Gross Profit', value:fmtINR(totals.gp), mom:g.gpMoM, qoq:g.gpQoQ, yoy:g.gpYoY, spark:g.sparkGP}),
-      richKpiCard({label:'GP %', value:totals.gpPct===null?'—':totals.gpPct.toFixed(1)+'%'}),
-    ] : []),
+    richKpiCard({label:'Gross Profit', value:fmtINR(totals.gp), mom:g.gpMoM, qoq:g.gpQoQ, yoy:g.gpYoY, spark:g.sparkGP}),
+    richKpiCard({label:'GP %', value:totals.gpPct.toFixed(1)+'%'}),
     richKpiCard({label:'Transactions', value:fmtNum(totals.txns)}),
     richKpiCard({label:'Avg Ticket Size', value:fmtINR(totals.ats)}),
     richKpiCard({label:'Avg CSAT', value:avgCsat!==null? avgCsat.toFixed(0)+'%':'—'}),
@@ -2283,126 +2053,9 @@ function renderCSAT(){
 /* ================================================================
    VIEW: Targets — Target vs Achievement
    ================================================================ */
-function buildProjectionCard(){
-  const p = computeLiveProjection();
-  const label = mkToLabel(p.mk);
-
-  if(p.noData){
-    return el('div',{class:'proj-card'},[
-      el('div',{class:'eyebrow'}, 'Live Projection — '+label),
-      el('div',{class:'proj-sub'}, 'No transactions recorded yet for '+label+' in this view — the projection will appear here once this month\'s data starts coming in.'),
-    ]);
-  }
-
-  const statusClass = p.projectedAchPct===null ? '' : p.projectedAchPct>=100?'proj-good':p.projectedAchPct>=85?'proj-warn':'proj-bad';
-  const paceText = p.paceVsExpected===null ? null :
-    (p.paceVsExpected>=0
-      ? `Running ${Math.abs(p.paceVsExpected).toFixed(1)}% ahead of expected pace so far`
-      : `Running ${Math.abs(p.paceVsExpected).toFixed(1)}% behind expected pace so far`);
-
-  return el('div',{class:'proj-card '+statusClass},[
-    el('div',{class:'eyebrow'}, 'Live Projection — '+label),
-    el('div',{class:'proj-main'},[
-      el('div',{},[
-        el('div',{class:'proj-big'}, fmtINR(p.projected)),
-        el('div',{class:'proj-big-label'}, 'Projected month-end revenue'),
-      ]),
-      p.target>0 ? el('div',{},[
-        el('span',{class:'proj-pill'}, (p.projectedAchPct!==null?p.projectedAchPct.toFixed(0):'—')+'% of target'),
-      ]) : null,
-    ]),
-    el('div',{class:'proj-sub'}, [
-      `Revenue to date: ${fmtINR(p.revenueSoFar)}${p.target>0?` · Expected by today: ${fmtINR(p.expectedToDate)}`:''}`,
-      paceText ? el('br') : null,
-      paceText || '',
-    ]),
-    el('div',{class:'proj-foot'}, `Based on ${p.elapsedWD} of ${p.totalWD} working days this month — Sundays excluded, centres are closed.`),
-  ]);
-}
-
-function buildSuggestedTargetsPanel(){
-  const {targetMonth, seasonalIndex, fullFYCount, idxTarget, rows, lowVolumeRows} = computeSuggestedTargets();
-  if(!targetMonth || (!rows.length && !lowVolumeRows.length)){
-    return panel('Suggested Targets', null, el('p',{style:'color:var(--text-faint);font-size:12.5px;'}, 'Not enough history yet to suggest targets for this scope.'));
-  }
-  const monthNames=['','Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  const note = el('div',{class:'suggest-note'}, [
-    el('b',{}, 'How this is calculated: '),
-    `each full centre's last 3 months are de-seasonalized (divided by their own calendar month's seasonal index) and averaged into an underlying trend level. That trend is then multiplied by `,
-    el('b',{}, monthNames[targetMonth%100]+"'s seasonal index"),
-    ` and a damped recent YoY growth rate (half-weighted, capped, so a temporary spike doesn't get fully extrapolated). Seasonal indices come only from `,
-    el('b',{}, fullFYCount+' complete fiscal year'+(fullFYCount!==1?'s':'')),
-    ` of established Service Centres — Repair Drop Off Locations and centres with under 6 months of history are excluded from that baseline and get a simpler, unadjusted 3-month average below instead (see why in that section). Suggested target for `,
-    el('b',{}, mkToLabel(targetMonth)),
-    `. Nothing here writes back to your workbook automatically — copy whichever numbers you're comfortable with into the Revenue Target sheet.`,
-  ]);
-
-  const seasonBar = el('div',{style:'display:flex;gap:2px;margin:12px 0 14px 0;'},
-    [1,2,3,4,5,6,7,8,9,10,11,12].map(cm=>{
-      const idx = seasonalIndex[cm];
-      const pct = ((idx-1)*100);
-      const isTarget = cm===(targetMonth%100);
-      const height = 8+Math.abs(pct)*1.6;
-      const color = pct>=0 ? 'var(--good)' : 'var(--bad)';
-      return el('div',{style:'flex:1;text-align:center;', title:monthNames[cm]+': '+(pct>=0?'+':'')+pct.toFixed(1)+'%'},[
-        el('div',{style:`height:${height}px;background:${color};border-radius:3px;opacity:${isTarget?1:0.45};`}),
-        el('div',{style:`font-size:9.5px;margin-top:4px;color:${isTarget?'var(--accent)':'var(--text-faint)'};font-weight:${isTarget?700:400};`}, monthNames[cm]),
-      ]);
-    })
-  );
-
-  const totalRow = {
-    centre: 'All full centres in view',
-    trendBase: rows.reduce((s,r)=>s+(r.trendBase||0),0),
-    dampedGrowth: null,
-    suggested: rows.reduce((s,r)=>s+(r.suggested||0),0),
-    existingTarget: rows.some(r=>r.existingTarget!==null) ? rows.reduce((s,r)=>s+(r.existingTarget||0),0) : null,
-  };
-  const mainTable = rows.length ? dataTable({
-    columns:[
-      {key:'centre', label:'Centre'},
-      {key:'trendBase', label:'De-seasonalized Trend', render:r=>numCell(r.trendBase)},
-      {key:'dampedGrowth', label:'Growth Applied', render:r=>el('td',{class:'num'}, r.dampedGrowth!==null? fmtPct(r.dampedGrowth*100) : '—')},
-      {key:'suggested', label:'Suggested Target', render:r=>el('td',{class:'num'}, r.suggested!==null? el('b',{}, fmtINR(r.suggested)) : '—')},
-      {key:'existingTarget', label:'Currently Set', render:r=>numCell(r.existingTarget)},
-    ],
-    rows: [totalRow, ...rows],
-  }) : el('p',{style:'color:var(--text-faint);font-size:12.5px;'}, 'No established centres in this view.');
-
-  const children = [note, seasonBar, mainTable];
-
-  if(lowVolumeRows.length){
-    const lvNote = el('div',{class:'suggest-note'}, [
-      el('b',{}, 'Drop-off locations & early-stage centres: '),
-      `these run at low, often sporadic volume — some months near zero — so seasonality and growth-rate math would mostly be modelling noise, not real demand patterns. `,
-      `Shown here as a plain 3-month average instead, with no adjustment. Treat as a rough baseline, not a firm target.`,
-    ]);
-    const lvTable = dataTable({
-      columns:[
-        {key:'centre', label:'Location'},
-        {key:'locationType', label:'Type'},
-        {key:'monthsWithData', label:'Months of Data', render:r=>el('td',{class:'num'}, String(r.monthsWithData))},
-        {key:'simpleAvg', label:'3-Month Avg', render:r=>numCell(r.simpleAvg)},
-        {key:'existingTarget', label:'Currently Set', render:r=>numCell(r.existingTarget)},
-      ],
-      rows: lowVolumeRows,
-    });
-    children.push(el('div',{style:'margin-top:22px;'},[
-      el('div',{style:'font-weight:700;font-size:13.5px;margin-bottom:10px;color:var(--text);'}, 'Drop-off & Early-Stage Locations'),
-      lvNote, lvTable,
-    ]));
-  }
-
-  return panel(`Suggested Targets — ${mkToLabel(targetMonth)}`, rows.length+' established centre'+(rows.length!==1?'s':'')+(lowVolumeRows.length?', '+lowVolumeRows.length+' drop-off/early-stage':''), el('div',{}, children));
-}
-
 function renderTargets(){
   const v = document.getElementById('view-targets');
   v.innerHTML='';
-
-  // Live projection is independent of whether targets are loaded at all —
-  // it's useful the moment there's any revenue data for the current month.
-  v.appendChild(buildProjectionCard());
 
   if(!hasAnyTargets()){
     v.appendChild(el('div',{class:'insight-card neutral'},[
@@ -2480,7 +2133,6 @@ function renderTargets(){
 
   v.appendChild(trendPanel);
   v.appendChild(tablePanel);
-  v.appendChild(buildSuggestedTargetsPanel());
 
   requestAnimationFrame(()=>{
     lineChart('targetTrend', series.map(s=>s.label), [
